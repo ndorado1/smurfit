@@ -89,10 +89,6 @@ DB_PASSWORD=...
 LANGSMITH_API_KEY=lsv2_pt_...     # opcional, para tracing
 ```
 
-## Deployment a Easypanel
-
-Ver [`DEPLOYMENT.md`](DEPLOYMENT.md) — paso a paso para conectar este repo a Easypanel, configurar el dominio y las variables de entorno.
-
 ## Usuarios
 
 Hardcoded para el alcance del taller. Cada uno tiene su propio historial de conversaciones en Postgres.
@@ -116,7 +112,6 @@ antonio · bradley · camilo · simon
 .
 ├── Dockerfile                # multi-stage: Node build → Python serve
 ├── .dockerignore
-├── DEPLOYMENT.md             # guía Easypanel
 ├── README.md
 ├── backend/
 │   ├── main.py               # FastAPI + APIRouter /api + servido del SPA
