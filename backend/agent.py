@@ -309,11 +309,21 @@ async def stream_agent(
 
     tools_used: list[str] = []
     full_answer = ""
-    # Fallback: algunos modelos (ej. ChatOllama con tool-calling) no emiten
-    # los tokens del response final via `on_chat_model_stream`. Capturamos
-    # el output desde `on_chain_end` del AgentExecutor para no quedarnos sin
-    # respuesta visible.
-    final_output_fallback = ""
+    # Fallbacks escalonados: capturamos el output desde dos eventos distintos
+    # para cubrir todos los casos en que `on_chat_model_stream` no emite tokens.
+    agent_output_fallback = ""    # output["output"] del AgentExecutor (estructurado)
+    last_llm_output = ""           # contenido del ultimo AIMessage del LLM
+
+    def _extract_content(value) -> str:
+        """Extrae texto de un value que puede ser str o lista de partes."""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "".join(
+                c.get("text", "") if isinstance(c, dict) else str(c)
+                for c in value
+            )
+        return ""
 
     async for event in agent.astream_events(
         {"input": user_input, "chat_history": chat_history},
@@ -330,28 +340,50 @@ async def stream_agent(
 
         elif kind == "on_chat_model_stream":
             chunk = event["data"]["chunk"]
-            content = getattr(chunk, "content", "")
-            # Algunos modelos retornan content como lista de partes
-            if isinstance(content, list):
-                content = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c)
-                    for c in content
-                )
+            content = _extract_content(getattr(chunk, "content", ""))
             if content:
                 full_answer += content
                 yield {"type": "token", "content": content}
 
+        elif kind == "on_chat_model_end":
+            # Captura el AIMessage completo del LLM en cada ronda — el ULTIMO
+            # es la respuesta final del agente al usuario.
+            output_msg = event.get("data", {}).get("output")
+            content = _extract_content(getattr(output_msg, "content", "")) if output_msg else ""
+            if content.strip():
+                last_llm_output = content
+
         elif kind == "on_chain_end":
-            # El AgentExecutor emite on_chain_end con el output final.
-            # Lo guardamos por si nunca llegaron tokens via stream.
+            # El AgentExecutor emite on_chain_end con {output: "...", intermediate_steps: ...}.
             data = event.get("data", {})
             output = data.get("output")
             if isinstance(output, dict) and "output" in output:
-                final_output_fallback = output["output"]
+                cand = output["output"]
+                if isinstance(cand, str):
+                    agent_output_fallback = cand
 
-    # Si los tokens no llegaron por streaming, emite la respuesta entera de golpe
-    if not full_answer.strip() and final_output_fallback.strip():
-        full_answer = final_output_fallback
-        yield {"type": "token", "content": final_output_fallback}
+    # Fallback escalonado si no hubo tokens via stream
+    if not full_answer.strip():
+        chosen_fallback = ""
+        source = ""
+        if agent_output_fallback.strip():
+            chosen_fallback, source = agent_output_fallback, "agent_executor.output"
+        elif last_llm_output.strip():
+            chosen_fallback, source = last_llm_output, "last_llm_message"
+
+        if chosen_fallback:
+            print(f"[stream_agent] Fallback aplicado desde {source} (provider={provider})")
+            full_answer = chosen_fallback
+            yield {"type": "token", "content": chosen_fallback}
+        else:
+            # Ultimo recurso: aviso al usuario para no dejar la burbuja en blanco
+            print(f"[stream_agent] WARNING: respuesta vacia (provider={provider}, "
+                  f"tools_used={tools_used}, history_len={len(db_history)})")
+            msg = (
+                "No pude generar una respuesta para esta pregunta. "
+                "Intenta reformularla o cambiar al modelo comercial."
+            )
+            full_answer = msg
+            yield {"type": "token", "content": msg}
 
     yield {"type": "done", "answer": full_answer, "tools_used": tools_used}
