@@ -1,0 +1,33 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Entornos y secretos
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Git y editor
+.git/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+**/npm-debug.log*
+
+# Docs y archivos de desarrollo (no se necesitan en runtime)
+README.md
+DEPLOYMENT.md
+docker-compose.yml

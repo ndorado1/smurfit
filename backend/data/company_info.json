@@ -1,0 +1,84 @@
+{
+  "razon_social": "Smurfit Kappa Cartón de Colombia S.A.",
+  "nombre_comercial": "Smurfit Westrock Colombia",
+  "nit": "890.300.406-9",
+  "telefono_principal": "+57 (602) 691 4000",
+  "email_servicio_cliente": "servicioalcliente.co@smurfitwestrock.com",
+  "email_gerente_general": "gerenciageneral.co@smurfitwestrock.com",
+  "horarios_atencion": {
+    "lunes_viernes": "8:00 a.m. - 5:00 p.m.",
+    "sabados": "8:00 a.m. - 12:00 p.m.",
+    "domingos_festivos": "Cerrado"
+  },
+  "sitio_web": "https://www.smurfitkappa.com/co",
+  "sedes": [
+    {
+      "ciudad": "Cali",
+      "tipo": "Sede principal y planta corrugadora",
+      "direccion": "Calle 15 # 18 - 109, Yumbo, Valle del Cauca",
+      "telefono": "+57 (602) 691 4000",
+      "empleados_aprox": 1200,
+      "certificaciones": ["FSC", "ISO 9001", "ISO 14001"]
+    },
+    {
+      "ciudad": "Bogotá",
+      "tipo": "Planta corrugadora",
+      "direccion": "Carrera 95 # 25C-09, Fontibón",
+      "telefono": "+57 (601) 423 6000",
+      "empleados_aprox": 350,
+      "certificaciones": ["FSC", "ISO 9001"]
+    },
+    {
+      "ciudad": "Barranquilla",
+      "tipo": "Planta corrugadora",
+      "direccion": "Vía 40 # 73-290, Zona Industrial",
+      "telefono": "+57 (605) 358 7000",
+      "empleados_aprox": 280,
+      "certificaciones": ["FSC", "ISO 9001"]
+    },
+    {
+      "ciudad": "Medellín",
+      "tipo": "Planta corrugadora",
+      "direccion": "Carrera 50 # 38 Sur-30, Itagüí",
+      "telefono": "+57 (604) 444 1500",
+      "empleados_aprox": 230,
+      "certificaciones": ["FSC", "ISO 9001", "LEED Silver"]
+    },
+    {
+      "ciudad": "Guarne",
+      "tipo": "Planta corrugadora nueva",
+      "direccion": "Autopista Medellín-Bogotá Km 23, Guarne, Antioquia",
+      "telefono": "+57 (604) 558 0100",
+      "empleados_aprox": 180,
+      "certificaciones": ["FSC", "LEED Silver", "ISO 14001"]
+    },
+    {
+      "ciudad": "Bogotá",
+      "tipo": "Planta de Sacos de Papel",
+      "direccion": "Carrera 68 # 25A-30, Puente Aranda",
+      "telefono": "+57 (601) 419 5000",
+      "empleados_aprox": 150,
+      "certificaciones": ["FSC", "ISO 9001"]
+    }
+  ],
+  "datos_globales": {
+    "presencia_paises": 40,
+    "empleados_global": 100000,
+    "fundacion_colombia": "1944",
+    "ciudad_fundacion": "Cali",
+    "fusion_smurfit_kappa": "2005",
+    "fusion_smurfit_westrock": "2024",
+    "hectareas_division_forestal": 68000,
+    "certificacion_fsc_desde": "2003",
+    "departamentos_operacion_forestal": 6
+  },
+  "productos_principales": [
+    "Empaques de cartón corrugado",
+    "Cartulina Óptima",
+    "Sacos de papel multipliego",
+    "Bag-in-Box",
+    "Empaques para eCommerce",
+    "Displays y empaques para retail",
+    "Empaques industriales"
+  ]
+}
