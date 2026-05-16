@@ -53,7 +53,7 @@ El usuario elige desde la UI; los settings de muestreo (temperature, top_p, etc.
 **Backend:**
 ```bash
 cd backend
-cp .env.example .env  # editar con tus API keys
+cp .env.example .env  # editar con API Keys
 uv sync
 uv run uvicorn main:app --reload --port 8000
 ```
