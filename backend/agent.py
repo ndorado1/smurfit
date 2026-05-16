@@ -308,6 +308,7 @@ async def stream_agent(
     chat_history = db_messages_to_lc(db_history)
 
     tools_used: list[str] = []
+    tool_outputs: list[dict] = []   # para recovery: {tool, output}
     full_answer = ""
     # Fallbacks escalonados: capturamos el output desde dos eventos distintos
     # para cubrir todos los casos en que `on_chat_model_stream` no emite tokens.
@@ -336,6 +337,12 @@ async def stream_agent(
             yield {"type": "tool_start", "tool": event["name"]}
 
         elif kind == "on_tool_end":
+            # Guardamos el output para usarlo en recovery si todo falla
+            tool_output_raw = event.get("data", {}).get("output", "")
+            tool_outputs.append({
+                "tool": event["name"],
+                "output": str(tool_output_raw)[:4000],   # truncamos para no exceder contexto
+            })
             yield {"type": "tool_end", "tool": event["name"]}
 
         elif kind == "on_chat_model_stream":
@@ -375,15 +382,80 @@ async def stream_agent(
             print(f"[stream_agent] Fallback aplicado desde {source} (provider={provider})")
             full_answer = chosen_fallback
             yield {"type": "token", "content": chosen_fallback}
+        elif tool_outputs:
+            # Nivel 4 — RECOVERY: el agente llamo tools pero no genero respuesta.
+            # Hacemos una llamada directa al LLM (sin agente, sin tool-calling)
+            # pasando los resultados de las tools para que sintetice.
+            print(f"[stream_agent] Recovery: sintetizando manualmente con "
+                  f"{len(tool_outputs)} tool outputs (provider={provider}, tools={tools_used})")
+            try:
+                recovery_text = await _recover_with_synthesis(
+                    user_input, tool_outputs, chat_history, provider, sampling,
+                )
+                if recovery_text.strip():
+                    full_answer = recovery_text
+                    yield {"type": "token", "content": recovery_text}
+                else:
+                    full_answer = _empty_response_message()
+                    yield {"type": "token", "content": full_answer}
+            except Exception as e:
+                print(f"[stream_agent] Recovery fallo: {e}")
+                full_answer = _empty_response_message()
+                yield {"type": "token", "content": full_answer}
         else:
-            # Ultimo recurso: aviso al usuario para no dejar la burbuja en blanco
-            print(f"[stream_agent] WARNING: respuesta vacia (provider={provider}, "
-                  f"tools_used={tools_used}, history_len={len(db_history)})")
-            msg = (
-                "No pude generar una respuesta para esta pregunta. "
-                "Intenta reformularla o cambiar al modelo comercial."
-            )
-            full_answer = msg
-            yield {"type": "token", "content": msg}
+            # Sin tools llamadas y sin respuesta — modelo realmente no produjo nada
+            print(f"[stream_agent] WARNING: respuesta vacia y sin tools "
+                  f"(provider={provider}, history_len={len(db_history)})")
+            full_answer = _empty_response_message()
+            yield {"type": "token", "content": full_answer}
 
     yield {"type": "done", "answer": full_answer, "tools_used": tools_used}
+
+
+def _empty_response_message() -> str:
+    return (
+        "No pude generar una respuesta para esta pregunta. "
+        "Intenta reformularla o cambiar al modelo comercial desde el sidebar."
+    )
+
+
+async def _recover_with_synthesis(
+    user_input: str,
+    tool_outputs: list[dict],
+    chat_history: list,
+    provider: str,
+    sampling: dict | None,
+) -> str:
+    """Recovery: llama al LLM directamente (SIN agente) para que sintetice una
+    respuesta a partir de los outputs de las tools. Util cuando el agente
+    llamo tools pero el ciclo de razonamiento se quedo sin emitir respuesta.
+    """
+    import json as _json
+
+    llm = _build_llm(provider, sampling)
+
+    tools_block = "\n\n".join(
+        f"### Resultado de `{t['tool']}`:\n{t['output']}"
+        for t in tool_outputs
+    )
+
+    synthesis_messages = [
+        ("system",
+         "Eres un asistente de Smurfit Westrock Colombia. Te paso la pregunta del "
+         "usuario y los resultados que ya devolvieron las herramientas consultadas. "
+         "Tu tarea es UNICAMENTE redactar la respuesta final en español, clara y "
+         "directa, usando esos resultados. No inventes datos. Si los resultados "
+         "no responden la pregunta, di que la informacion no esta disponible."),
+        ("human",
+         f"Pregunta del usuario: {user_input}\n\n"
+         f"Resultados de las herramientas:\n{tools_block}\n\n"
+         f"Redacta la respuesta final para el usuario."),
+    ]
+
+    msg = await llm.ainvoke(synthesis_messages)
+    content = msg.content if hasattr(msg, "content") else ""
+    if isinstance(content, list):
+        content = "".join(
+            c.get("text", "") if isinstance(c, dict) else str(c) for c in content
+        )
+    return content or ""
