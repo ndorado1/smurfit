@@ -35,6 +35,14 @@ export default function Training() {
 
   useEffect(() => { refresh() }, [])
 
+  // Polling: mientras haya documentos "procesando", refresca cada 3s.
+  useEffect(() => {
+    const anyProcessing = docs.some((d) => d.status === 'processing')
+    if (!anyProcessing) return
+    const id = setInterval(refresh, 3000)
+    return () => clearInterval(id)
+  }, [docs])
+
   const handleFile = async (file) => {
     if (!file) return
     if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -44,7 +52,7 @@ export default function Training() {
     setError(null); setFlash(null); setUploading(true)
     try {
       const r = await kbUpload(file)
-      setFlash(`✓ "${r.filename}" procesado: ${r.chunks} chunks agregados a la base de conocimiento.`)
+      setFlash(`✓ "${r.filename}" subido (${r.chunks} chunks). Generando embeddings en segundo plano…`)
       await refresh()
     } catch (e) {
       setError(e.message)
@@ -150,7 +158,20 @@ export default function Training() {
                   PDF
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-slate-700 truncate">{d.filename}</div>
+                  <div className="font-medium text-slate-700 truncate flex items-center gap-2">
+                    {d.filename}
+                    {d.status === 'processing' && (
+                      <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 inline-flex items-center gap-1">
+                        <span className="typing-dot" /> procesando
+                      </span>
+                    )}
+                    {d.status === 'ready' && (
+                      <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✓ listo</span>
+                    )}
+                    {d.status === 'error' && (
+                      <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-red-100 text-red-700" title={d.error || ''}>✕ error</span>
+                    )}
+                  </div>
                   <div className="text-xs text-slate-400">
                     {d.chunk_count} chunks · {d.char_count.toLocaleString()} caracteres · subido por {d.uploaded_by}
                   </div>

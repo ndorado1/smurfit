@@ -102,9 +102,13 @@ def init_kb_schema() -> None:
                 filename     TEXT NOT NULL,
                 chunk_count  INTEGER NOT NULL DEFAULT 0,
                 char_count   INTEGER NOT NULL DEFAULT 0,
+                status       TEXT NOT NULL DEFAULT 'ready',
+                error        TEXT,
                 uploaded_by  TEXT,
                 uploaded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ready';
+            ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS error TEXT;
             """
         )
 
@@ -141,13 +145,31 @@ def add_documents_batched(
 # ── Tabla de documentos subidos ───────────────────────────────────────────────
 
 def register_document(doc_id: str, filename: str, chunk_count: int,
-                      char_count: int, uploaded_by: str | None) -> None:
+                      char_count: int, uploaded_by: str | None,
+                      status: str = "ready") -> None:
     with _pg_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO kb_documents (doc_id, filename, chunk_count, char_count, uploaded_by)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (doc_id, filename, chunk_count, char_count, uploaded_by),
+            """INSERT INTO kb_documents
+               (doc_id, filename, chunk_count, char_count, uploaded_by, status)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (doc_id, filename, chunk_count, char_count, uploaded_by, status),
         )
+
+
+def update_document_status(doc_id: str, status: str,
+                           error: str | None = None,
+                           chunk_count: int | None = None) -> None:
+    with _pg_conn() as conn, conn.cursor() as cur:
+        if chunk_count is not None:
+            cur.execute(
+                "UPDATE kb_documents SET status=%s, error=%s, chunk_count=%s WHERE doc_id=%s",
+                (status, error, chunk_count, doc_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE kb_documents SET status=%s, error=%s WHERE doc_id=%s",
+                (status, error, doc_id),
+            )
 
 
 def list_documents() -> list[dict]:

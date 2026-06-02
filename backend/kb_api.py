@@ -14,7 +14,7 @@ en PGVector) y muestra el estado actual de la KB para el dashboard.
 import io
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
@@ -23,6 +23,23 @@ import kb_store
 from deps import require_user
 
 kb_router = APIRouter(prefix="/api/kb")
+
+
+def _embed_document_bg(doc_id: str, docs: list[Document], ids: list[str]) -> None:
+    """Tarea en background: genera embeddings y los inserta en PGVector.
+    Actualiza el estado del documento (ready / error) al terminar."""
+    try:
+        kb_store.add_documents_batched(docs, ids, batch=20)
+        kb_store.update_document_status(doc_id, "ready", error=None)
+        print(f"[kb] documento {doc_id} procesado: {len(docs)} chunks.")
+    except Exception as e:
+        print(f"[kb] error procesando {doc_id}: {e}")
+        # Limpieza de chunks parciales + marcar error
+        try:
+            kb_store.get_vectorstore().delete(ids=ids)
+        except Exception:
+            pass
+        kb_store.update_document_status(doc_id, "error", error=str(e)[:500])
 
 
 @kb_router.get("/status")
@@ -46,11 +63,13 @@ def kb_delete(doc_id: str, user_id: str = Depends(require_user)):
 
 @kb_router.post("/upload")
 def kb_upload(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user_id: str = Depends(require_user),
 ):
-    """Sube un PDF, lo procesa y enriquece la KB. Sincrono (FastAPI lo corre
-    en un threadpool) — el front muestra un spinner mientras tanto."""
+    """Sube un PDF. La extraccion + chunking se hace al instante; los embeddings
+    (lo lento) se procesan en BACKGROUND para no bloquear la peticion ni timeoutear
+    con PDFs grandes. El front muestra el estado 'procesando' y hace polling."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF.")
 
@@ -72,7 +91,7 @@ def kb_upload(
             detail="El PDF no contiene texto extraible (¿es un escaneo sin OCR?).",
         )
 
-    # 2. Chunking (mismo splitter que el web scraping)
+    # 2. Chunking (rapido)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500,
         chunk_overlap=200,
@@ -82,7 +101,7 @@ def kb_upload(
     if not chunks:
         raise HTTPException(status_code=400, detail="No se generaron chunks del PDF.")
 
-    # 3. Embeddings + insercion en PGVector
+    # 3. Registrar como 'procesando' y agendar los embeddings en background
     doc_id = uuid.uuid4().hex
     source = f"{kb_store.SOURCE_PDF_PREFIX}:{file.filename}"
     docs = [
@@ -94,19 +113,11 @@ def kb_upload(
     ]
     ids = [f"{doc_id}_{i}" for i in range(len(chunks))]
 
-    try:
-        kb_store.add_documents_batched(docs, ids, batch=20)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al generar embeddings: {e}")
-
-    # 4. Registrar el documento
     kb_store.register_document(
-        doc_id=doc_id,
-        filename=file.filename,
-        chunk_count=len(chunks),
-        char_count=len(text),
-        uploaded_by=user_id,
+        doc_id=doc_id, filename=file.filename, chunk_count=len(chunks),
+        char_count=len(text), uploaded_by=user_id, status="processing",
     )
+    background_tasks.add_task(_embed_document_bg, doc_id, docs, ids)
 
     return {
         "ok": True,
@@ -114,4 +125,5 @@ def kb_upload(
         "filename": file.filename,
         "chunks": len(chunks),
         "chars": len(text),
+        "status": "processing",
     }
