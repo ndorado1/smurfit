@@ -116,8 +116,41 @@ def init_schema() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_messages_chat_created
                 ON messages(chat_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS cotizaciones (
+                id             UUID PRIMARY KEY,
+                producto       TEXT NOT NULL,
+                cantidad       TEXT NOT NULL,
+                email_contacto TEXT NOT NULL,
+                nombre_cliente TEXT,
+                canal          TEXT NOT NULL DEFAULT 'web',
+                thread_id      TEXT,
+                created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
             """
         )
+
+
+# ── Cotizaciones (leads comerciales — accion critica del HITL) ────────────────
+
+def add_cotizacion(producto: str, cantidad: str, email_contacto: str,
+                   nombre_cliente: str = "", canal: str = "web",
+                   thread_id: str | None = None) -> dict:
+    cot_id = str(uuid.uuid4())
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO cotizaciones
+               (id, producto, cantidad, email_contacto, nombre_cliente, canal, thread_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+            (cot_id, producto, cantidad, email_contacto, nombre_cliente or None, canal, thread_id),
+        )
+        return cur.fetchone()
+
+
+def list_cotizaciones(limit: int = 100) -> list[dict]:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM cotizaciones ORDER BY created_at DESC LIMIT %s", (limit,))
+        return cur.fetchall()
 
 
 # ── Chats ─────────────────────────────────────────────────────────────────────

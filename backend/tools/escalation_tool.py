@@ -43,15 +43,31 @@ def registrar_solicitud_cotizacion(
     Esta accion queda pendiente de aprobacion de un asesor humano antes de
     confirmarse.
     """
+    # Persiste el lead en la tabla cotizaciones (Postgres). Esta es la accion
+    # "critica" que el HumanInTheLoopMiddleware protege: solo se ejecuta tras
+    # la aprobacion humana, y aqui SI escribe en la base de datos.
+    try:
+        import db
+        row = db.add_cotizacion(
+            producto=producto,
+            cantidad=cantidad,
+            email_contacto=email_contacto,
+            nombre_cliente=nombre_cliente,
+        )
+        cot_id = str(row["id"])
+    except Exception as e:
+        return (f"No se pudo registrar la cotizacion en este momento ({type(e).__name__}). "
+                "Por favor intenta de nuevo o contacta a Smurfit Kappa Colombia.")
+
     registro = {
+        "id": cot_id,
         "producto": producto,
         "cantidad": cantidad,
         "email_contacto": email_contacto,
         "nombre_cliente": nombre_cliente or "(no especificado)",
         "registrado_en": datetime.now(timezone.utc).isoformat(),
-        "estado": "aprobado_y_registrado",
     }
     return (
-        "Solicitud de cotizacion registrada correctamente. Un asesor comercial "
+        f"Solicitud de cotizacion registrada (ID {cot_id[:8]}). Un asesor comercial "
         f"contactara al cliente.\n{json.dumps(registro, ensure_ascii=False, indent=2)}"
     )

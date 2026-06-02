@@ -324,6 +324,13 @@ async def _agent_event_stream(agen, chat_id, chat, first_user_msg):
         db.update_chat_title(chat_id, snippet + ("..." if len(first_user_msg) > 40 else ""))
 
 
+@api.get("/cotizaciones")
+def get_cotizaciones(user_id: str = Depends(require_user)):
+    """Lista las cotizaciones registradas (leads de la accion critica HITL)."""
+    rows = db.list_cotizaciones()
+    return [{**r, "id": str(r["id"]), "created_at": r["created_at"].isoformat()} for r in rows]
+
+
 @api.get("/health")
 def health():
     return {
