@@ -69,17 +69,27 @@ def require_chat_owned_by(chat_id: str, user_id: str) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.open_pool()
-    db.init_schema()
-    # Tabla de documentos subidos (Entrenamiento) en el Postgres+pgvector
-    import kb_store
-    kb_store.init_kb_schema()
-    # Inicializa el checkpointer async de LangGraph (crea sus tablas si no existen)
     import memory
-    await memory.setup_checkpointer()
+
+    # Inicializacion resiliente: si la DB tiene un hipo, la app igual arranca
+    # (health y el webhook-verify de WhatsApp no dependen de la DB). Las tablas
+    # usan CREATE IF NOT EXISTS, asi que se crean cuando la DB este disponible.
+    try:
+        db.open_pool()
+        db.init_schema()
+        import kb_store
+        kb_store.init_kb_schema()
+        await memory.setup_checkpointer()
+        print("[startup] DB + checkpointer listos.")
+    except Exception as e:
+        print(f"[startup] WARNING: inicializacion de DB fallo ({e}). "
+              "La app arranca igual; reintenta operaciones de DB despues.")
     yield
-    await memory.close_checkpointer()
-    db.close_pool()
+    try:
+        await memory.close_checkpointer()
+        db.close_pool()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Smurfit Westrock — Agente Conversacional", lifespan=lifespan)

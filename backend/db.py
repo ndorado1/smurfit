@@ -19,13 +19,15 @@ from psycopg_pool import ConnectionPool
 
 
 def _conninfo() -> str:
-    return (
-        f"host={os.getenv('DB_HOST', 'easypanel.innovatec.co')} "
-        f"port={os.getenv('DB_PORT', '5438')} "
-        f"dbname={os.getenv('DB_NAME', 'llm')} "
-        f"user={os.getenv('DB_USER', 'postgres')} "
-        f"password={os.getenv('DB_PASSWORD', '')}"
-    )
+    # Modulo 3: TODO consolidado en el Postgres pgvector (mismo que kb_store y
+    # memory). Se leen primero las KB_DB_* (fuente de verdad); DB_* solo como
+    # override opcional. Asi una env DB_* vieja no rompe la conexion.
+    host = os.getenv("KB_DB_HOST") or os.getenv("DB_HOST", "easypanel.innovatec.co")
+    port = os.getenv("KB_DB_PORT") or os.getenv("DB_PORT", "5439")
+    dbname = os.getenv("KB_DB_NAME") or os.getenv("DB_NAME", "supabase")
+    user = os.getenv("KB_DB_USER") or os.getenv("DB_USER", "postgres")
+    password = os.getenv("KB_DB_PASSWORD") or os.getenv("DB_PASSWORD", "")
+    return f"host={host} port={port} dbname={dbname} user={user} password={password}"
 
 
 # Pool global. Se crea en open_pool() (lifespan startup) y se cierra en close_pool().
@@ -41,14 +43,18 @@ def open_pool() -> None:
         return
     _pool = ConnectionPool(
         conninfo=_conninfo(),
-        min_size=2,
+        min_size=1,
         max_size=10,
         timeout=15,
         kwargs={"row_factory": dict_row},
         open=True,
     )
-    # Verifica que al menos una conexion se pueda abrir antes de aceptar trafico
-    _pool.wait(timeout=15)
+    # No bloqueamos el arranque si la DB tarda: el pool conecta en background
+    # cuando este disponible. Antes un hipo de la DB tumbaba toda la app.
+    try:
+        _pool.wait(timeout=8)
+    except Exception as e:
+        print(f"[db] Pool aun no listo al arranque ({e}); conectara en background.")
 
 
 def close_pool() -> None:
