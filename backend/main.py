@@ -25,7 +25,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 import db
-from agent import PROVIDERS, run_agent, stream_agent
+from agent import PROVIDERS, resume_agent, run_agent, stream_agent
 
 # Carpeta donde se monta el frontend buildeado (lo copia el Dockerfile multi-stage).
 # En desarrollo no existe — el frontend corre con Vite en :5173.
@@ -71,7 +71,14 @@ def require_chat_owned_by(chat_id: str, user_id: str) -> dict:
 async def lifespan(app: FastAPI):
     db.open_pool()
     db.init_schema()
+    # Tabla de documentos subidos (Entrenamiento) en el Postgres+pgvector
+    import kb_store
+    kb_store.init_kb_schema()
+    # Inicializa el checkpointer async de LangGraph (crea sus tablas si no existen)
+    import memory
+    await memory.setup_checkpointer()
     yield
+    await memory.close_checkpointer()
     db.close_pool()
 
 
@@ -174,7 +181,7 @@ def get_messages(chat_id: str, user_id: str = Depends(require_user)):
 
 
 @api.post("/chats/{chat_id}/messages", response_model=ChatResponse)
-def send_message(
+async def send_message(
     chat_id: str,
     payload: MessageIn,
     user_id: str = Depends(require_user),
@@ -184,28 +191,22 @@ def send_message(
     if not payload.content.strip():
         raise HTTPException(status_code=400, detail="Mensaje vacio.")
 
-    # 1. Persistir mensaje del usuario
+    # Mensaje del usuario al espejo de display (la memoria real la lleva el
+    # checkpointer via thread_id = chat_id).
     db.add_message(chat_id, role="user", content=payload.content)
 
-    # 2. Recuperar historial completo de la conversacion
-    history = db.get_messages(chat_id)
-    prior_history = history[:-1]
-
-    # 3. Ejecutar el agente
     try:
-        answer, tools_used = run_agent(
-            payload.content, prior_history,
+        answer, tools_used = await run_agent(
+            payload.content, thread_id=chat_id,
             provider=provider, sampling=payload.sampling,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error del agente: {e}")
 
-    # 4. Persistir respuesta del asistente
     tool_used = tools_used[0] if tools_used else None
     db.add_message(chat_id, role="assistant", content=answer, tool_used=tool_used)
     db.touch_chat(chat_id)
 
-    # 5. Autotitulo si la conversacion sigue siendo "Nueva conversacion"
     if chat["title"] == "Nueva conversacion":
         snippet = payload.content[:40].strip()
         db.update_chat_title(chat_id, snippet + ("..." if len(payload.content) > 40 else ""))
@@ -231,61 +232,86 @@ async def stream_message(
     if not payload.content.strip():
         raise HTTPException(status_code=400, detail="Mensaje vacio.")
 
-    # Persistir mensaje del usuario y obtener historial previo
+    # Mensaje del usuario al espejo de display. La memoria del agente la lleva
+    # el checkpointer (thread_id = chat_id) — NO se reinyecta historial.
     db.add_message(chat_id, role="user", content=payload.content)
-    history = db.get_messages(chat_id)
-    prior_history = history[:-1]
 
-    async def event_stream():
-        import traceback
-        full_answer = ""
-        tools_used: list[str] = []
-        try:
-            async for event in stream_agent(
-                payload.content, prior_history,
-                provider=provider, sampling=payload.sampling,
-            ):
-                if event["type"] == "done":
-                    full_answer = event["answer"]
-                    tools_used = event["tools_used"]
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            # Imprimir stack completo en consola del backend
-            print("=" * 60)
-            print(f"[ERROR STREAM] chat_id={chat_id} user={user_id}")
-            traceback.print_exc()
-            print("=" * 60)
-            err = {"type": "error", "message": f"{type(e).__name__}: {e}"}
-            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
-            # Guardar un mensaje de error como respuesta del asistente para
-            # que el historial muestre que algo paso
-            db.add_message(
-                chat_id, role="assistant",
-                content=f"_⚠ Error al procesar la pregunta: {type(e).__name__}_",
-                tool_used=None,
-            )
-            db.touch_chat(chat_id)
-            return
+    return StreamingResponse(
+        _agent_event_stream(
+            stream_agent(thread_id=chat_id, user_input=payload.content,
+                         provider=provider, sampling=payload.sampling),
+            chat_id=chat_id, chat=chat, first_user_msg=payload.content,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
-        # Persistir respuesta del asistente al terminar el stream
+
+class ResumeIn(BaseModel):
+    decision: str  # "approve" | "reject" | "edit"
+    edited_args: dict | None = None
+
+
+@api.post("/chats/{chat_id}/resume")
+async def resume_message(
+    chat_id: str,
+    payload: ResumeIn,
+    user_id: str = Depends(require_user),
+    provider: str = Depends(get_provider),
+):
+    """Reanuda una conversacion interrumpida por Human-in-the-Loop con la
+    decision humana (aprobar / rechazar / editar la accion critica)."""
+    chat = require_chat_owned_by(chat_id, user_id)
+    return StreamingResponse(
+        _agent_event_stream(
+            resume_agent(chat_id, payload.decision, payload.edited_args, provider),
+            chat_id=chat_id, chat=chat, first_user_msg=None,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _agent_event_stream(agen, chat_id, chat, first_user_msg):
+    """Envuelve un generador de eventos del agente en SSE, persiste la
+    respuesta final al espejo de display y maneja errores cortesmente."""
+    import traceback
+    full_answer = ""
+    tools_used: list[str] = []
+    interrupted = False
+    try:
+        async for event in agen:
+            t = event.get("type")
+            if t == "done":
+                full_answer = event["answer"]
+                tools_used = event["tools_used"]
+            elif t == "interrupt":
+                interrupted = True
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    except Exception as e:
+        print("=" * 60)
+        print(f"[ERROR STREAM] chat_id={chat_id}")
+        traceback.print_exc()
+        print("=" * 60)
+        yield f"data: {json.dumps({'type': 'error', 'message': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
+        db.add_message(chat_id, role="assistant",
+                       content=f"_⚠ Error al procesar la pregunta: {type(e).__name__}_")
+        db.touch_chat(chat_id)
+        return
+
+    # Si quedo interrumpido (esperando aprobacion HITL), no persistimos respuesta.
+    if not interrupted and full_answer:
         tool_used = tools_used[0] if tools_used else None
         db.add_message(chat_id, role="assistant", content=full_answer, tool_used=tool_used)
         db.touch_chat(chat_id)
 
-        # Autotitulo si la conversacion sigue siendo "Nueva conversacion"
-        if chat["title"] == "Nueva conversacion":
-            snippet = payload.content[:40].strip()
-            db.update_chat_title(chat_id, snippet + ("..." if len(payload.content) > 40 else ""))
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # desactiva buffering de Nginx si aplica
-            "Connection": "keep-alive",
-        },
-    )
+    if first_user_msg and chat["title"] == "Nueva conversacion":
+        snippet = first_user_msg[:40].strip()
+        db.update_chat_title(chat_id, snippet + ("..." if len(first_user_msg) > 40 else ""))
 
 
 @api.get("/health")
@@ -303,6 +329,16 @@ def health():
 # ── Registrar el router de la API ────────────────────────────────────────────
 
 app.include_router(api)
+
+# Router de "Entrenamiento" (gestion de la KB / upload de PDFs)
+from kb_api import kb_router  # noqa: E402
+
+app.include_router(kb_router)
+
+# Webhook de WhatsApp (Meta Cloud API). Debe ir ANTES del catch-all del SPA.
+from whatsapp import wa_router  # noqa: E402
+
+app.include_router(wa_router)
 
 
 # ── Servir el frontend buildeado (SPA) ───────────────────────────────────────

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import MessageBubble from './MessageBubble'
 import MessageSkeleton from './MessageSkeleton'
 import ThinkingIndicator from './ThinkingIndicator'
+import ApprovalCard from './ApprovalCard'
 
 const SAMPLE_QUESTIONS = [
   '¿Cuál es el horario de atención al cliente?',
@@ -12,7 +13,7 @@ const SAMPLE_QUESTIONS = [
   '¿En qué dirección está la planta de Bogotá?',
 ]
 
-export default function ChatWindow({ messages, loading, messagesLoading, streamingState, onPickSample }) {
+export default function ChatWindow({ messages, loading, messagesLoading, streamingState, pendingApproval, onApprovalDecision, onPickSample }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -82,6 +83,14 @@ export default function ChatWindow({ messages, loading, messagesLoading, streami
             content={streamingState.buffer}
             toolUsed={streamingState.completedTools[0]}
             streaming
+          />
+        )}
+
+        {pendingApproval && (
+          <ApprovalCard
+            approval={pendingApproval}
+            onDecision={onApprovalDecision}
+            disabled={loading}
           />
         )}
 

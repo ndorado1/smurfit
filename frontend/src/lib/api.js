@@ -105,6 +105,29 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ content, sampling: _currentSampling() }),
   }),
+
+  // ── Entrenamiento (gestion de la base de conocimiento) ──
+  kbStatus:    ()      => req('/kb/status'),
+  kbDocuments: ()      => req('/kb/documents'),
+  kbDelete:    (docId) => req(`/kb/documents/${docId}`, { method: 'DELETE' }),
+}
+
+/** Sube un PDF (multipart) al endpoint de entrenamiento. */
+export async function kbUpload(file) {
+  const user = getCurrentUser()
+  if (!user) throw new Error('Sin sesion.')
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/kb/upload`, {
+    method: 'POST',
+    headers: { 'X-User-Id': user },  // sin Content-Type: el browser pone el boundary
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status}: ${text}`)
+  }
+  return res.json()
 }
 
 /**
@@ -117,6 +140,40 @@ export const api = {
  *   { type: 'done',       answer: '...', tools_used: [...] }
  *   { type: 'error',      message: '...' }
  */
+async function _consumeSSE(res, onEvent) {
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status}: ${text}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let streamError = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      for (const line of block.split('\n')) {
+        if (!line.startsWith('data:')) continue
+        const raw = line.slice(5).trim()
+        if (!raw) continue
+        let parsed
+        try { parsed = JSON.parse(raw) }
+        catch (e) { console.warn('SSE parse error', e, raw); continue }
+        if (parsed.type === 'error') streamError = parsed.message
+        try { onEvent(parsed) }
+        catch (e) { streamError = e.message }
+      }
+    }
+  }
+  if (streamError) throw new Error(streamError)
+}
+
 export async function streamMessage(chatId, content, onEvent) {
   const user = getCurrentUser()
   const provider = getCurrentProvider() || 'commercial'
@@ -132,54 +189,24 @@ export async function streamMessage(chatId, content, onEvent) {
     },
     body: JSON.stringify({ content, sampling: _currentSampling() }),
   })
+  await _consumeSSE(res, onEvent)
+}
 
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`${res.status}: ${text}`)
-  }
+/** Reanuda una conversacion interrumpida por HITL (approve / reject / edit). */
+export async function resumeMessage(chatId, decision, editedArgs, onEvent) {
+  const user = getCurrentUser()
+  const provider = getCurrentProvider() || 'commercial'
+  if (!user) throw new Error('Sin sesion.')
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-
-  let streamError = null
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    // SSE separa eventos por linea en blanco. Una linea de datos: "data: {...}\n"
-    let idx
-    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-      const block = buffer.slice(0, idx)
-      buffer = buffer.slice(idx + 2)
-      for (const line of block.split('\n')) {
-        if (!line.startsWith('data:')) continue
-        const raw = line.slice(5).trim()
-        if (!raw) continue
-        let parsed
-        try {
-          parsed = JSON.parse(raw)
-        } catch (e) {
-          console.warn('SSE parse error', e, raw)
-          continue
-        }
-        // Capturar errores del backend para lanzarlos al final del stream
-        if (parsed.type === 'error') {
-          streamError = parsed.message
-        }
-        try {
-          onEvent(parsed)
-        } catch (e) {
-          // No silenciar errores de la callback
-          streamError = e.message
-        }
-      }
-    }
-  }
-
-  if (streamError) {
-    throw new Error(streamError)
-  }
+  const res = await fetch(`${BASE}/chats/${chatId}/resume`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-User-Id': user,
+      'X-Model-Provider': provider,
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify({ decision, edited_args: editedArgs || null }),
+  })
+  await _consumeSSE(res, onEvent)
 }

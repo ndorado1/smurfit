@@ -15,6 +15,7 @@ const PROVIDER_INFO = {
 export default function Sidebar({
   chats, activeId, onSelect, onNew, onDelete,
   currentUser, onLogout, currentProvider, onChangeProvider, onOpenSettings,
+  view = 'chat', onChangeView,
 }) {
   const [hoverId, setHoverId] = useState(null)
   const avatarColor = AVATAR_COLORS[currentUser] || 'bg-slate-500'
@@ -32,9 +33,31 @@ export default function Sidebar({
             <div className="text-xs text-sw-200">Asistente Virtual</div>
           </div>
         </div>
+
+        {/* Navegacion Chat / Entrenamiento */}
+        <div className="flex gap-1 bg-sw-800/60 rounded-lg p-1 mb-3">
+          <button
+            onClick={() => onChangeView?.('chat')}
+            className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              view === 'chat' ? 'bg-white text-sw-700' : 'text-sw-100 hover:bg-sw-800'
+            }`}
+          >
+            💬 Chat
+          </button>
+          <button
+            onClick={() => onChangeView?.('training')}
+            className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              view === 'training' ? 'bg-white text-sw-700' : 'text-sw-100 hover:bg-sw-800'
+            }`}
+          >
+            🎓 Entrenamiento
+          </button>
+        </div>
+
         <button
           onClick={onNew}
-          className="w-full bg-white text-sw-700 hover:bg-sw-50 transition-colors px-3 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 shadow-sm"
+          disabled={view === 'training'}
+          className="w-full bg-white text-sw-700 hover:bg-sw-50 transition-colors px-3 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

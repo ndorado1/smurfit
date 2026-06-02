@@ -5,8 +5,9 @@ import ChatInput from './components/ChatInput'
 import Login from './components/Login'
 import ModelSelect from './components/ModelSelect'
 import SettingsModal from './components/SettingsModal'
+import Training from './components/Training'
 import {
-  api, streamMessage,
+  api, streamMessage, resumeMessage,
   getCurrentUser, setCurrentUser, clearCurrentUser,
   getCurrentProvider, setCurrentProvider, clearCurrentProvider,
 } from './lib/api'
@@ -15,6 +16,7 @@ export default function App() {
   const [currentUser, setUser] = useState(() => getCurrentUser())
   const [currentProvider, setProvider] = useState(() => getCurrentProvider())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [view, setView] = useState('chat')  // 'chat' | 'training'
   const [chats, setChats] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [messages, setMessages] = useState([])
@@ -26,6 +28,8 @@ export default function App() {
   //   activeTool: tool corriendo ahora (o null)
   //   completedTools: tools que ya retornaron
   //   buffer: texto acumulado de tokens del agente
+  // Aprobacion HITL pendiente: { tool, args, description } o null
+  const [pendingApproval, setPendingApproval] = useState(null)
   const [streamingState, setStreamingState] = useState({
     phase: null, activeTool: null, completedTools: [], buffer: '',
   })
@@ -83,6 +87,7 @@ export default function App() {
 
   // Cargar mensajes al cambiar de chat (solo cuando el usuario selecciona uno)
   useEffect(() => {
+    setPendingApproval(null)  // descarta aprobaciones pendientes de otro chat
     if (!activeId) { setMessages([]); setMessagesLoading(false); return }
     if (skipNextFetch.current) {
       skipNextFetch.current = false
@@ -143,43 +148,56 @@ export default function App() {
     // Inicializa el estado de streaming
     setStreamingState({ phase: 'thinking', activeTool: null, completedTools: [], buffer: '' })
 
+    await consumeStream(
+      chatId,
+      (onEvent) => streamMessage(chatId, text, onEvent),
+      () => setMessages((prev) => prev.filter((m) => m.id !== tmpId)),
+    )
+  }
+
+  // Consume un stream del agente (enviar o reanudar) con manejo comun de
+  // eventos, incluido el interrupt de Human-in-the-Loop.
+  const consumeStream = async (chatId, runner, onError) => {
+    let interrupted = false
     try {
-      await streamMessage(chatId, text, (ev) => {
+      await runner((ev) => {
         if (ev.type === 'tool_start') {
           setStreamingState((s) => ({ ...s, phase: 'thinking', activeTool: ev.tool }))
         } else if (ev.type === 'tool_end') {
-          setStreamingState((s) => ({
-            ...s,
-            activeTool: null,
-            completedTools: [...s.completedTools, ev.tool],
-          }))
+          setStreamingState((s) => ({ ...s, activeTool: null, completedTools: [...s.completedTools, ev.tool] }))
         } else if (ev.type === 'token') {
-          setStreamingState((s) => ({
-            ...s,
-            phase: 'streaming',
-            activeTool: null,
-            buffer: s.buffer + ev.content,
-          }))
-        } else if (ev.type === 'done') {
-          // El backend ya persistio el mensaje; recargamos para tener IDs reales
+          setStreamingState((s) => ({ ...s, phase: 'streaming', activeTool: null, buffer: s.buffer + ev.content }))
+        } else if (ev.type === 'interrupt') {
+          interrupted = true
+          setPendingApproval({ tool: ev.tool, args: ev.args || {}, description: ev.description || '' })
         } else if (ev.type === 'error') {
           throw new Error(ev.message)
         }
       })
 
-      // Stream terminado: recargar para reemplazar el buffer por el mensaje real
-      const [fresh] = await Promise.all([
-        api.getMessages(chatId),
-        refreshChats(),
-      ])
-      setMessages(fresh)
+      if (!interrupted) {
+        const [fresh] = await Promise.all([api.getMessages(chatId), refreshChats()])
+        setMessages(fresh)
+      }
     } catch (e) {
       setError(e.message)
-      setMessages((prev) => prev.filter((m) => m.id !== tmpId))
+      onError?.()
     } finally {
       setLoading(false)
       setStreamingState({ phase: null, activeTool: null, completedTools: [], buffer: '' })
     }
+  }
+
+  // Respuesta del humano a la aprobacion HITL (approve / reject)
+  const handleApproval = async (decision) => {
+    if (!activeId) return
+    setPendingApproval(null)
+    setLoading(true)
+    setStreamingState({ phase: 'thinking', activeTool: null, completedTools: [], buffer: '' })
+    await consumeStream(
+      activeId,
+      (onEvent) => resumeMessage(activeId, decision, null, onEvent),
+    )
   }
 
   const handleSelectChat = (id) => {
@@ -208,6 +226,8 @@ export default function App() {
         currentProvider={currentProvider}
         onChangeProvider={handleChangeProvider}
         onOpenSettings={() => setSettingsOpen(true)}
+        view={view}
+        onChangeView={setView}
       />
 
       <SettingsModal
@@ -217,34 +237,42 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col bg-white">
-        <header className="border-b border-sw-100 px-6 py-3 flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold text-sw-700">
-              {activeId ? (chats.find((c) => c.id === activeId)?.title || 'Conversación') : 'Inicio'}
-            </h2>
-            <p className="text-xs text-slate-400">
-              {activeId ? 'Conversación activa' : 'Selecciona o crea una conversación para empezar'}
-            </p>
-          </div>
-          <div className="text-xs text-slate-400">
-            Agente con router · RAG + Datos estructurados
-          </div>
-        </header>
+        {view === 'training' ? (
+          <Training />
+        ) : (
+          <>
+            <header className="border-b border-sw-100 px-6 py-3 flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-sw-700">
+                  {activeId ? (chats.find((c) => c.id === activeId)?.title || 'Conversación') : 'Inicio'}
+                </h2>
+                <p className="text-xs text-slate-400">
+                  {activeId ? 'Conversación activa' : 'Selecciona o crea una conversación para empezar'}
+                </p>
+              </div>
+              <div className="text-xs text-slate-400">
+                Agente LangChain · RAG + Function Calling
+              </div>
+            </header>
 
-        {error && (
-          <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
-            ⚠ {error}
-          </div>
+            {error && (
+              <div className="bg-red-50 border-b border-red-200 px-4 py-2 text-sm text-red-700">
+                ⚠ {error}
+              </div>
+            )}
+
+            <ChatWindow
+              messages={messages}
+              loading={loading}
+              messagesLoading={messagesLoading}
+              streamingState={streamingState}
+              pendingApproval={pendingApproval}
+              onApprovalDecision={handleApproval}
+              onPickSample={handleSend}
+            />
+            <ChatInput onSend={handleSend} disabled={loading || !!pendingApproval} />
+          </>
         )}
-
-        <ChatWindow
-          messages={messages}
-          loading={loading}
-          messagesLoading={messagesLoading}
-          streamingState={streamingState}
-          onPickSample={handleSend}
-        />
-        <ChatInput onSend={handleSend} disabled={loading} />
       </main>
     </div>
   )

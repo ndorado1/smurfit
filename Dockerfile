@@ -26,7 +26,7 @@ RUN npm run build
 # ─── Etapa 2: backend con frontend embebido ──────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-# Dependencias del sistema necesarias para psycopg, faiss y compilacion
+# Dependencias del sistema necesarias para psycopg y compilacion
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
