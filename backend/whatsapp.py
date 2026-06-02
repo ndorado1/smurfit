@@ -93,7 +93,7 @@ async def _process_message(phone: str, text: str) -> None:
     """Corre el agente (thread_id = telefono) y responde por WhatsApp."""
     try:
         provider = _cfg("WHATSAPP_PROVIDER", "commercial")
-        answer = await run_agent_collect(thread_id=phone, user_input=text, provider=provider)
+        answer = await run_agent_collect(thread_id=phone, user_input=text, provider=provider, user=phone)
         if not answer:
             answer = ("Disculpa, no pude generar una respuesta en este momento. "
                       "¿Podrias reformular tu pregunta?")

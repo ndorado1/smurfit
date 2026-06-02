@@ -110,6 +110,9 @@ export const api = {
   kbStatus:    ()      => req('/kb/status'),
   kbDocuments: ()      => req('/kb/documents'),
   kbDelete:    (docId) => req(`/kb/documents/${docId}`, { method: 'DELETE' }),
+
+  // ── Cotizaciones (leads del HITL) ──
+  listCotizaciones: () => req('/cotizaciones'),
 }
 
 /** Sube un PDF (multipart) al endpoint de entrenamiento. */

@@ -17,6 +17,7 @@ deja de ser una tool y pasa a inyectarse via dynamic_prompt en cada turno.
 """
 
 import os
+from dataclasses import dataclass
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -27,6 +28,13 @@ from langchain.agents.middleware import (
 from langchain.chat_models import init_chat_model
 
 from kb_store import get_vectorstore
+
+
+@dataclass
+class AgentContext:
+    """Contexto runtime del agente. user_id = perfil web o telefono (WhatsApp).
+    Las tools lo leen via ToolRuntime (ej. para el cliente de una cotizacion)."""
+    user_id: str = ""
 from memory import get_checkpointer
 from tools.escalation_tool import TOOL_NAME as COTIZACION_TOOL
 from tools.escalation_tool import registrar_solicitud_cotizacion
@@ -151,6 +159,7 @@ def _build_agent(provider: str, sampling: dict | None = None):
         tools=tools,
         middleware=middleware,
         checkpointer=get_checkpointer(),
+        context_schema=AgentContext,
     )
 
 
@@ -189,16 +198,17 @@ def _serialize_interrupt(interrupts) -> dict:
     return {"tool": "", "args": {}, "description": str(interrupts)[:300]}
 
 
-async def _astream_events(agent, agent_input, config):
+async def _astream_events(agent, agent_input, config, context=None):
     """Generador comun: traduce el stream del grafo a eventos SSE
     (token / tool_start / tool_end / interrupt / done)."""
     tools_used: list[str] = []
     full = ""
     seen_starts: set[str] = set()
 
-    async for mode, chunk in agent.astream(
-        agent_input, config=config, stream_mode=["updates", "messages"]
-    ):
+    kwargs = {"config": config, "stream_mode": ["updates", "messages"]}
+    if context is not None:
+        kwargs["context"] = context
+    async for mode, chunk in agent.astream(agent_input, **kwargs):
         if mode == "messages":
             msg, _meta = chunk
             if "AIMessage" in msg.__class__.__name__:
@@ -231,13 +241,14 @@ async def stream_agent(
     user_input: str,
     provider: str = "commercial",
     sampling: dict | None = None,
+    user: str = "",
 ):
     """Procesa un mensaje nuevo con streaming. La memoria la restaura el
     checkpointer via thread_id — NO se pasa historial manualmente."""
     agent = get_agent(provider, sampling)
     config = {"configurable": {"thread_id": thread_id}}
     agent_input = {"messages": [{"role": "user", "content": user_input}]}
-    async for event in _astream_events(agent, agent_input, config):
+    async for event in _astream_events(agent, agent_input, config, AgentContext(user_id=user)):
         yield event
 
 
@@ -246,6 +257,7 @@ async def resume_agent(
     decision: str,
     edited_args: dict | None = None,
     provider: str = "commercial",
+    user: str = "",
 ):
     """Reanuda una conversacion interrumpida por HITL con la decision humana
     (approve / reject / edit)."""
@@ -264,7 +276,9 @@ async def resume_agent(
     else:
         decisions = [{"type": "reject"}]
 
-    async for event in _astream_events(agent, Command(resume={"decisions": decisions}), config):
+    async for event in _astream_events(
+        agent, Command(resume={"decisions": decisions}), config, AgentContext(user_id=user)
+    ):
         yield event
 
 
@@ -272,6 +286,7 @@ async def run_agent_collect(
     thread_id: str,
     user_input: str,
     provider: str = "commercial",
+    user: str = "",
 ) -> str:
     """Recolecta la respuesta completa del agente (para canales sin streaming,
     como WhatsApp). Si la accion critica interrumpe (HITL), auto-aprueba — sobre
@@ -279,14 +294,14 @@ async def run_agent_collect(
     directamente. Devuelve el texto final."""
     answer = ""
     interrupted = False
-    async for ev in stream_agent(thread_id, user_input, provider):
+    async for ev in stream_agent(thread_id, user_input, provider, user=user):
         if ev["type"] == "token":
             answer += ev["content"]
         elif ev["type"] == "interrupt":
             interrupted = True
     if interrupted:
         answer = ""  # la respuesta final viene tras aprobar
-        async for ev in resume_agent(thread_id, "approve", None, provider):
+        async for ev in resume_agent(thread_id, "approve", None, provider, user=user):
             if ev["type"] == "token":
                 answer += ev["content"]
     return answer.strip()

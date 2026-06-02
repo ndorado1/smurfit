@@ -13,6 +13,7 @@ sensibles de forma autonoma sin supervision.
 import json
 from datetime import datetime, timezone
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,7 @@ def registrar_solicitud_cotizacion(
     producto: str,
     cantidad: str,
     email_contacto: str,
+    runtime: ToolRuntime,
     nombre_cliente: str = "",
 ) -> str:
     """Registra una solicitud de cotizacion para que un asesor comercial de
@@ -43,6 +45,20 @@ def registrar_solicitud_cotizacion(
     Esta accion queda pendiente de aprobacion de un asesor humano antes de
     confirmarse.
     """
+    # Si el LLM no capturo el nombre del cliente, usa el usuario de la sesion
+    # (el perfil web, o el telefono en WhatsApp) inyectado via ToolRuntime.
+    cliente = nombre_cliente
+    canal = "web"
+    try:
+        ctx_user = getattr(runtime.context, "user_id", "") or ""
+        if not cliente:
+            cliente = ctx_user
+        # thread_id estilo telefono (solo digitos, >=10) -> canal whatsapp
+        if ctx_user.isdigit() and len(ctx_user) >= 10:
+            canal = "whatsapp"
+    except Exception:
+        ctx_user = ""
+
     # Persiste el lead en la tabla cotizaciones (Postgres). Esta es la accion
     # "critica" que el HumanInTheLoopMiddleware protege: solo se ejecuta tras
     # la aprobacion humana, y aqui SI escribe en la base de datos.
@@ -52,7 +68,9 @@ def registrar_solicitud_cotizacion(
             producto=producto,
             cantidad=cantidad,
             email_contacto=email_contacto,
-            nombre_cliente=nombre_cliente,
+            nombre_cliente=cliente,
+            canal=canal,
+            thread_id=ctx_user or None,
         )
         cot_id = str(row["id"])
     except Exception as e:
@@ -64,7 +82,7 @@ def registrar_solicitud_cotizacion(
         "producto": producto,
         "cantidad": cantidad,
         "email_contacto": email_contacto,
-        "nombre_cliente": nombre_cliente or "(no especificado)",
+        "nombre_cliente": cliente or "(no especificado)",
         "registrado_en": datetime.now(timezone.utc).isoformat(),
     }
     return (

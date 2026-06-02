@@ -13,7 +13,7 @@ const SAMPLE_QUESTIONS = [
   '¿En qué dirección está la planta de Bogotá?',
 ]
 
-export default function ChatWindow({ messages, loading, messagesLoading, streamingState, pendingApproval, onApprovalDecision, onPickSample }) {
+export default function ChatWindow({ messages, loading, messagesLoading, streamingState, pendingApproval, onApprovalDecision, currentUser, onPickSample }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -91,6 +91,7 @@ export default function ChatWindow({ messages, loading, messagesLoading, streami
             approval={pendingApproval}
             onDecision={onApprovalDecision}
             disabled={loading}
+            currentUser={currentUser}
           />
         )}
 

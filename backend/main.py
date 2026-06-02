@@ -249,7 +249,7 @@ async def stream_message(
     return StreamingResponse(
         _agent_event_stream(
             stream_agent(thread_id=chat_id, user_input=payload.content,
-                         provider=provider, sampling=payload.sampling),
+                         provider=provider, sampling=payload.sampling, user=user_id),
             chat_id=chat_id, chat=chat, first_user_msg=payload.content,
         ),
         media_type="text/event-stream",
@@ -278,7 +278,7 @@ async def resume_message(
     chat = require_chat_owned_by(chat_id, user_id)
     return StreamingResponse(
         _agent_event_stream(
-            resume_agent(chat_id, payload.decision, payload.edited_args, provider),
+            resume_agent(chat_id, payload.decision, payload.edited_args, provider, user=user_id),
             chat_id=chat_id, chat=chat, first_user_msg=None,
         ),
         media_type="text/event-stream",

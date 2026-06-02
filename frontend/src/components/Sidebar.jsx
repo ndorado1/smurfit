@@ -50,13 +50,21 @@ export default function Sidebar({
               view === 'training' ? 'bg-white text-sw-700' : 'text-sw-100 hover:bg-sw-800'
             }`}
           >
-            🎓 Entrenamiento
+            🎓 Entrenar
+          </button>
+          <button
+            onClick={() => onChangeView?.('cotizaciones')}
+            className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              view === 'cotizaciones' ? 'bg-white text-sw-700' : 'text-sw-100 hover:bg-sw-800'
+            }`}
+          >
+            📋 Leads
           </button>
         </div>
 
         <button
           onClick={onNew}
-          disabled={view === 'training'}
+          disabled={view !== 'chat'}
           className="w-full bg-white text-sw-700 hover:bg-sw-50 transition-colors px-3 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

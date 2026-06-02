@@ -6,6 +6,7 @@ import Login from './components/Login'
 import ModelSelect from './components/ModelSelect'
 import SettingsModal from './components/SettingsModal'
 import Training from './components/Training'
+import Cotizaciones from './components/Cotizaciones'
 import {
   api, streamMessage, resumeMessage,
   getCurrentUser, setCurrentUser, clearCurrentUser,
@@ -239,6 +240,8 @@ export default function App() {
       <main className="flex-1 flex flex-col bg-white">
         {view === 'training' ? (
           <Training />
+        ) : view === 'cotizaciones' ? (
+          <Cotizaciones />
         ) : (
           <>
             <header className="border-b border-sw-100 px-6 py-3 flex items-center justify-between">
@@ -268,6 +271,7 @@ export default function App() {
               streamingState={streamingState}
               pendingApproval={pendingApproval}
               onApprovalDecision={handleApproval}
+              currentUser={currentUser}
               onPickSample={handleSend}
             />
             <ChatInput onSend={handleSend} disabled={loading || !!pendingApproval} />

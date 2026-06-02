@@ -10,8 +10,13 @@ const ARG_LABELS = {
  * ejecutar una accion critica (registrar una cotizacion) y requiere que un
  * humano apruebe o rechace antes de continuar.
  */
-export default function ApprovalCard({ approval, onDecision, disabled }) {
+export default function ApprovalCard({ approval, onDecision, disabled, currentUser }) {
   const { tool, args } = approval
+  // Si el LLM no capturo el cliente, mostramos el perfil de la sesion.
+  const displayArgs = {
+    ...args,
+    nombre_cliente: args.nombre_cliente || currentUser || '',
+  }
   return (
     <div className="flex justify-start mb-4 gap-3">
       <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center text-sm font-bold flex-shrink-0 mt-1">
@@ -25,7 +30,7 @@ export default function ApprovalCard({ approval, onDecision, disabled }) {
         </p>
 
         <div className="bg-white rounded-lg border border-amber-200 p-3 mb-3 text-sm">
-          {Object.entries(args).map(([k, v]) => (
+          {Object.entries(displayArgs).map(([k, v]) => (
             <div key={k} className="flex gap-2 py-0.5">
               <span className="text-slate-500 min-w-[120px]">{ARG_LABELS[k] || k}:</span>
               <span className="font-medium text-slate-800">{String(v) || '—'}</span>
